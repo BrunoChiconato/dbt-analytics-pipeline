@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:latest
+    container_name: postgres_northwind
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: northwind
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./northwind.sql:/docker-entrypoint-initdb.d/northwind.sql
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
