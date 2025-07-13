@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: fct_accumulated_revenues
+    description: "Tabela de fatos com receitas mensais e acumuladas por ano"
+    columns:
+      - name: order_year
+        description: "Ano da receita"
+        tests:
+          - not_null
+      - name: order_month
+        description: "Mês da receita"
+        tests:
+          - not_null
+      - name: monthly_revenue
+        description: "Receita total do mês"
+        tests:
+          - not_null
+      - name: monthly_diff
+        description: "Diferença de receita em relação ao mês anterior"
+      - name: ytd_revenue
+        description: "Receita acumulada no ano (Year-to-Date)"
+        tests:
+          - not_null
+      - name: change_percentage
+        description: "Percentual de mudança em relação ao mês anterior"
+
+  - name: fct_revenues_1997
+    description: "Receita total consolidada do ano de 1997"
+    columns:
+      - name: total_revenues_1997
+        description: "Soma de todas as receitas de 1997"
+        tests:
+          - not_null
+
+  - name: fct_customer_revenues
+    description: "Receita total por cliente, ordenada do maior para o menor"
+    columns:
+      - name: customer_id
+        description: "Identificador único do cliente"
+        tests:
+          - unique
+          - not_null
+      - name: company_name
+        description: "Nome da empresa cliente"
+        tests:
+          - not_null
+      - name: total_revenue
+        description: "Receita total gerada pelo cliente"
+        tests:
+          - not_null

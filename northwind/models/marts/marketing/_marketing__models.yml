@@ -1,0 +1,86 @@
+version: 2
+
+models:
+  - name: dim_customer_groups
+    description: "Dimensão de clientes segmentados em 5 grupos por receita (quintis)"
+    columns:
+      - name: customer_id
+        description: "Identificador único do cliente"
+        tests:
+          - unique
+          - not_null
+      - name: company_name
+        description: "Nome da empresa"
+        tests:
+          - not_null
+      - name: total_revenue
+        description: "Receita total do cliente"
+        tests:
+          - not_null
+      - name: revenue_group
+        description: "Grupo de receita (1=maior receita, 5=menor receita)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4, 5]
+
+  - name: dim_marketing_targets
+    description: "Clientes dos grupos 3, 4 e 5 para campanhas de marketing"
+    columns:
+      - name: customer_id
+        description: "Identificador único do cliente"
+        tests:
+          - unique
+          - not_null
+      - name: company_name
+        description: "Nome da empresa"
+        tests:
+          - not_null
+      - name: total_revenue
+        description: "Receita total do cliente"
+        tests:
+          - not_null
+      - name: revenue_group
+        description: "Grupo de receita (3, 4 ou 5)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [3, 4, 5]
+
+  - name: fct_product_sales
+    description: "Top 10 produtos por vendas totais"
+    columns:
+      - name: product_id
+        description: "Identificador único do produto"
+        tests:
+          - unique
+          - not_null
+      - name: product_name
+        description: "Nome do produto"
+        tests:
+          - not_null
+      - name: total_sales
+        description: "Vendas totais do produto"
+        tests:
+          - not_null
+      - name: sales_rank
+        description: "Ranking de vendas (1 a 10)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+  - name: fct_uk_high_value_customers
+    description: "Clientes do Reino Unido com pagamentos superiores a £1000"
+    columns:
+      - name: customer_id
+        description: "Identificador único do cliente"
+        tests:
+          - unique
+          - not_null
+      - name: contact_name
+        description: "Nome do contato do cliente"
+      - name: payments
+        description: "Total de pagamentos realizados (em libras)"
+        tests:
+          - not_null
