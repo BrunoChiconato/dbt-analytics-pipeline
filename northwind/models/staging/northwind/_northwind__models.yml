@@ -1,0 +1,82 @@
+version: 2
+
+models:
+  - name: stg_northwind__customers
+    description: "Modelo staging para clientes do sistema Northwind. Cada linha representa um cliente único."
+    columns:
+      - name: customer_id
+        description: "Identificador único do cliente"
+        tests:
+          - unique
+          - not_null
+      - name: company_name
+        description: "Nome da empresa cliente"
+        tests:
+          - not_null
+      - name: contact_name
+        description: "Nome do contato principal na empresa"
+      - name: country
+        description: "País onde o cliente está localizado"
+
+  - name: stg_northwind__orders
+    description: "Modelo staging para pedidos. Cada linha representa um pedido único."
+    columns:
+      - name: order_id
+        description: "Identificador único do pedido"
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: "Referência ao cliente que realizou o pedido"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_northwind__customers')
+              field: customer_id
+      - name: order_date
+        description: "Data em que o pedido foi realizado"
+        tests:
+          - not_null
+
+  - name: stg_northwind__order_details
+    description: "Modelo staging para detalhes de pedidos. Cada linha representa um item em um pedido."
+    columns:
+      - name: order_id
+        description: "Referência ao pedido principal"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_northwind__orders')
+              field: order_id
+      - name: product_id
+        description: "Referência ao produto vendido"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_northwind__products')
+              field: product_id
+      - name: unit_price
+        description: "Preço unitário do produto no momento da venda"
+        tests:
+          - not_null
+      - name: quantity
+        description: "Quantidade de unidades vendidas"
+        tests:
+          - not_null
+      - name: discount_percentage
+        description: "Percentual de desconto aplicado (0.00 a 1.00)"
+        tests:
+          - not_null
+
+  - name: stg_northwind__products
+    description: "Modelo staging para produtos. Cada linha representa um produto único no catálogo."
+    columns:
+      - name: product_id
+        description: "Identificador único do produto"
+        tests:
+          - unique
+          - not_null
+      - name: product_name
+        description: "Nome descritivo do produto"
+        tests:
+          - not_null
