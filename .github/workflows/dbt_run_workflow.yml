@@ -1,0 +1,174 @@
+name: DBT Run Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'models/**'
+      - 'data/**'
+      - 'macros/**'
+      - 'dbt_project.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: northwind/dbt
+  ECS_CLUSTER: northwind-cluster
+  ECS_TASK_DEFINITION: northwind-dbt-run
+
+jobs:
+  build-and-run:
+    name: Build and Run dbt
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Run dbt on ECS Fargate
+        id: run-dbt
+        run: |
+          # Criar override para o container
+          CONTAINER_OVERRIDE=$(cat <<EOF
+          {
+            "containerOverrides": [
+              {
+                "name": "dbt",
+                "command": ["dbt", "run", "--profiles-dir", "/dbt"],
+                "environment": [
+                  {
+                    "name": "DBT_PROFILES_DIR",
+                    "value": "/dbt"
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+          )
+
+          # Executar task
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_1 }},${{ secrets.PRIVATE_SUBNET_2 }}],securityGroups=[${{ secrets.FARGATE_SECURITY_GROUP }}]}" \
+            --overrides "$CONTAINER_OVERRIDE" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          echo "task_arn=$TASK_ARN" >> $GITHUB_OUTPUT
+
+          # Aguardar conclusão da task
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARN
+
+          # Verificar status de saída
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --tasks $TASK_ARN \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "dbt run failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+
+      - name: Run dbt tests
+        run: |
+          CONTAINER_OVERRIDE=$(cat <<EOF
+          {
+            "containerOverrides": [
+              {
+                "name": "dbt",
+                "command": ["dbt", "test", "--profiles-dir", "/dbt"]
+              }
+            ]
+          }
+          EOF
+          )
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_1 }},${{ secrets.PRIVATE_SUBNET_2 }}],securityGroups=[${{ secrets.FARGATE_SECURITY_GROUP }}]}" \
+            --overrides "$CONTAINER_OVERRIDE" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARN
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --tasks $TASK_ARN \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "dbt test failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+
+      - name: Upload artifacts to S3
+        if: success()
+        run: |
+          # Criar task para copiar artefatos
+          CONTAINER_OVERRIDE=$(cat <<EOF
+          {
+            "containerOverrides": [
+              {
+                "name": "dbt",
+                "command": [
+                  "sh", "-c",
+                  "dbt compile --profiles-dir /dbt && aws s3 sync target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"
+                ]
+              }
+            ]
+          }
+          EOF
+          )
+
+          aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_1 }},${{ secrets.PRIVATE_SUBNET_2 }}],securityGroups=[${{ secrets.FARGATE_SECURITY_GROUP }}]}" \
+            --overrides "$CONTAINER_OVERRIDE"
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ dbt run completed successfully!"
+          echo "📊 View logs in CloudWatch: https://console.aws.amazon.com/cloudwatch/home?region=${{ env.AWS_REGION }}#logsV2:log-groups/log-group/%2Fecs%2Fnorthwind%2Fdbt"
+
+      - name: Trigger docs deployment
+        if: success() && github.ref == 'refs/heads/main'
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          event-type: deploy-docs
+          client-payload: '{"sha": "${{ github.sha }}"}'
