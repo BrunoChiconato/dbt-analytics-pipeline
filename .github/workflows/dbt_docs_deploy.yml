@@ -1,0 +1,90 @@
+name: Deploy dbt Documentation
+
+on:
+  repository_dispatch:
+    types: [deploy-docs]
+  workflow_run:
+    workflows: ["DBT Run Pipeline"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: northwind/dbt
+  ECS_CLUSTER: northwind-cluster
+  ECS_TASK_DEFINITION: northwind-dbt-run
+
+jobs:
+  generate-and-deploy-docs:
+    name: Generate and Deploy Documentation
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generate dbt docs
+        id: generate-docs
+        run: |
+          CONTAINER_OVERRIDE=$(cat <<EOF
+          {
+            "containerOverrides": [
+              {
+                "name": "dbt",
+                "command": [
+                  "sh", "-c",
+                  "dbt docs generate --profiles-dir /dbt && aws s3 sync target/ s3://${{ secrets.DBT_DOCS_BUCKET }}/"
+                ]
+              }
+            ]
+          }
+          EOF
+          )
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_1 }},${{ secrets.PRIVATE_SUBNET_2 }}],securityGroups=[${{ secrets.FARGATE_SECURITY_GROUP }}]}" \
+            --overrides "$CONTAINER_OVERRIDE" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARN
+
+      - name: Setup Python
+        if: ${{ vars.USE_GITHUB_PAGES == 'true' }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dbt
+        if: ${{ vars.USE_GITHUB_PAGES == 'true' }}
+        run: |
+          pip install dbt-postgres==${{ vars.DBT_VERSION }}
+
+      - name: Generate docs locally
+        if: ${{ vars.USE_GITHUB_PAGES == 'true' }}
+        run: |
+          mkdir -p ~/.dbt
+          echo "${{ secrets.DBT_PROFILES_YML }}" > ~/.dbt/profiles.yml
+
+          dbt docs generate
+
+      - name: Deploy to GitHub Pages
+        if: ${{ vars.USE_GITHUB_PAGES == 'true' }}
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target
+          publish_branch: gh-pages
+          cname: docs.northwind-analytics.com
