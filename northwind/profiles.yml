@@ -1,0 +1,12 @@
+northwind:
+  target: prod
+  outputs:
+    prod:
+      type: postgres
+      host: "{{ env_var('DBT_HOST') }}"
+      user: "{{ env_var('DBT_USER') }}"
+      password: "{{ env_var('DBT_PASSWORD') }}"
+      port: 5432
+      dbname: northwind
+      schema: public
+      threads: 4
