@@ -48,48 +48,45 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+      - name: Helper to run ECS Tasks
+        id: ecs-helper
+        run: |
+          # Instala o jq, uma ferramenta para manipular JSON
+          sudo apt-get update && sudo apt-get install -y jq
+
       - name: Run dbt on ECS Fargate
         id: run-dbt
         run: |
-          # Criar override para o container
-          CONTAINER_OVERRIDE=$(cat <<EOF
-          {
-            "containerOverrides": [
-              {
-                "name": "dbt",
-                "image": "${{ steps.build-image.outputs.image }}",
-                "command": ["dbt", "run", "--profiles-dir", "/dbt"],
-                "environment": [
-                  {
-                    "name": "DBT_PROFILES_DIR",
-                    "value": "/dbt"
-                  }
-                ]
-              }
-            ]
-          }
-          EOF
-          )
+          # Pega a definição da tarefa existente para usar como template
+          TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
 
-          # Executar task
-          TASK_ARN=$(aws ecs run-task \
+          # Cria uma nova definição de tarefa, atualizando a imagem e o comando do dbt
+          NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
+            jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
+            jq '.containerDefinitions[0].command = ["dbt", "run", "--profiles-dir", "/dbt"]' | \
+            jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
+
+          # Registra a nova versão da tarefa e captura o ARN
+          NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          # Executa a nova tarefa
+          TASK_RUN_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --task-definition $NEW_TASK_ARN \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_1 }},${{ secrets.PRIVATE_SUBNET_2 }}],securityGroups=[${{ secrets.FARGATE_SECURITY_GROUP }}]}" \
-            --overrides "$CONTAINER_OVERRIDE" \
             --query 'tasks[0].taskArn' \
             --output text)
 
-          echo "task_arn=$TASK_ARN" >> $GITHUB_OUTPUT
+          echo "task_arn=$TASK_RUN_ARN" >> $GITHUB_OUTPUT
 
-          # Aguardar conclusão da task
-          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARN
+          # Aguarda a conclusão
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_RUN_ARN
 
-          # Verificar status de saída
+          # Verifica o status de saída
           EXIT_CODE=$(aws ecs describe-tasks \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --tasks $TASK_ARN \
+            --tasks $TASK_RUN_ARN \
             --query 'tasks[0].containers[0].exitCode' \
             --output text)
 
@@ -100,36 +97,25 @@ jobs:
 
       - name: Run dbt tests
         run: |
-          CONTAINER_OVERRIDE=$(cat <<EOF
-          {
-            "containerOverrides": [
-              {
-              "name": "dbt",
-              "image": "${{ steps.build-image.outputs.image }}",
-              "command": ["dbt", "test", "--profiles-dir", "/dbt"]
-              }
-            ]
-          }
-          EOF
-          )
-
-          TASK_ARN=$(aws ecs run-task \
+          TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
+          NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
+            jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
+            jq '.containerDefinitions[0].command = ["dbt", "test", "--profiles-dir", "/dbt"]' | \
+            jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
+          NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
+          TASK_RUN_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --task-definition $NEW_TASK_ARN \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_1 }},${{ secrets.PRIVATE_SUBNET_2 }}],securityGroups=[${{ secrets.FARGATE_SECURITY_GROUP }}]}" \
-            --overrides "$CONTAINER_OVERRIDE" \
             --query 'tasks[0].taskArn' \
             --output text)
-
-          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARN
-
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_RUN_ARN
           EXIT_CODE=$(aws ecs describe-tasks \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --tasks $TASK_ARN \
+            --tasks $TASK_RUN_ARN \
             --query 'tasks[0].containers[0].exitCode' \
             --output text)
-
           if [ "$EXIT_CODE" != "0" ]; then
             echo "dbt test failed with exit code $EXIT_CODE"
             exit 1
@@ -138,29 +124,17 @@ jobs:
       - name: Upload artifacts to S3
         if: success()
         run: |
-          # Criar task para copiar artefatos
-          CONTAINER_OVERRIDE=$(cat <<EOF
-          {
-            "containerOverrides": [
-              {
-                "name": "dbt",
-                "image": "${{ steps.build-image.outputs.image }}",
-                "command": [
-                  "sh", "-c",
-                  "dbt compile --profiles-dir /dbt && aws s3 sync target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"
-                ]
-              }
-            ]
-          }
-          EOF
-          )
-
+          TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
+          NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
+            jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
+            jq '.containerDefinitions[0].command = ["sh", "-c", "dbt compile --profiles-dir /dbt && aws s3 sync target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"]' | \
+            jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
+          NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
           aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --task-definition $NEW_TASK_ARN \
             --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_1 }},${{ secrets.PRIVATE_SUBNET_2 }}],securityGroups=[${{ secrets.FARGATE_SECURITY_GROUP }}]}" \
-            --overrides "$CONTAINER_OVERRIDE"
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_1 }},${{ secrets.PRIVATE_SUBNET_2 }}],securityGroups=[${{ secrets.FARGATE_SECURITY_GROUP }}]}"
 
       - name: Notify success
         if: success()
