@@ -70,6 +70,7 @@ jobs:
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
             jq '.containerDefinitions[0].command = ["dbt", "run"]' | \
+            jq 'del(.containerDefinitions[0].environment)' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
           TASK_RUN_ARN=$(aws ecs run-task \
@@ -97,6 +98,7 @@ jobs:
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
             jq '.containerDefinitions[0].command = ["dbt", "test"]' | \
+            jq 'del(.containerDefinitions[0].environment)' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
           TASK_RUN_ARN=$(aws ecs run-task \
@@ -124,6 +126,7 @@ jobs:
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
             jq '.containerDefinitions[0].command = ["sh", "-c", "dbt compile && aws s3 sync target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"]' | \
+            jq 'del(.containerDefinitions[0].environment)' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
           aws ecs run-task \
