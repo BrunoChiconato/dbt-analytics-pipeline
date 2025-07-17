@@ -60,7 +60,7 @@ jobs:
 
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
-            jq '.containerDefinitions[0].command = ["dbt", "run", "--project-dir", "northwind", "--profiles-dir", "/dbt"]' | \
+            jq '.containerDefinitions[0].command = ["dbt", "run", "--project-dir", "northwind"]' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
 
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
@@ -93,7 +93,7 @@ jobs:
           TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
-            jq '.containerDefinitions[0].command = ["dbt", "test", "--project-dir", "northwind", "--profiles-dir", "/dbt"]' | \
+            jq '.containerDefinitions[0].command = ["dbt", "test", "--project-dir", "northwind"]' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
           TASK_RUN_ARN=$(aws ecs run-task \
@@ -120,7 +120,7 @@ jobs:
           TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
-            jq '.containerDefinitions[0].command = ["sh", "-c", "dbt compile --project-dir northwind --profiles-dir /dbt && aws s3 sync northwind/target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"]' | \
+            jq '.containerDefinitions[0].command = ["sh", "-c", "dbt compile --project-dir northwind && aws s3 sync northwind/target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"]' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
           aws ecs run-task \
