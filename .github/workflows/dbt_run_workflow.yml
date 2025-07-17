@@ -24,6 +24,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Debug file contents and structure
+        run: |
+          echo "========================================="
+          echo "Listando todos os arquivos no repositório:"
+          ls -laR
+          echo "========================================="
+          echo "Conteúdo do Dockerfile:"
+          cat docker/Dockerfile
+          echo "========================================="
+          echo "Conteúdo da Workflow:"
+          cat .github/workflows/dbt_run_workflow.yml
+          echo "========================================="
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
