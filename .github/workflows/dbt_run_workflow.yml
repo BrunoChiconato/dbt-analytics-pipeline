@@ -51,25 +51,20 @@ jobs:
       - name: Helper to run ECS Tasks
         id: ecs-helper
         run: |
-          # Instala o jq, uma ferramenta para manipular JSON
           sudo apt-get update && sudo apt-get install -y jq
 
       - name: Run dbt on ECS Fargate
         id: run-dbt
         run: |
-          # Pega a definição da tarefa existente para usar como template
           TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
 
-          # Cria uma nova definição de tarefa, atualizando a imagem e o comando do dbt
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
-            jq '.containerDefinitions[0].command = ["dbt", "run", "--profiles-dir", "/dbt"]' | \
+            jq '.containerDefinitions[0].command = ["dbt", "run", "--project-dir", "northwind", "--profiles-dir", "/dbt"]' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
 
-          # Registra a nova versão da tarefa e captura o ARN
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
 
-          # Executa a nova tarefa
           TASK_RUN_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER }} \
             --task-definition $NEW_TASK_ARN \
@@ -80,10 +75,8 @@ jobs:
 
           echo "task_arn=$TASK_RUN_ARN" >> $GITHUB_OUTPUT
 
-          # Aguarda a conclusão
           aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_RUN_ARN
 
-          # Verifica o status de saída
           EXIT_CODE=$(aws ecs describe-tasks \
             --cluster ${{ env.ECS_CLUSTER }} \
             --tasks $TASK_RUN_ARN \
@@ -100,7 +93,7 @@ jobs:
           TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
-            jq '.containerDefinitions[0].command = ["dbt", "test", "--profiles-dir", "/dbt"]' | \
+            jq '.containerDefinitions[0].command = ["dbt", "test", "--project-dir", "northwind", "--profiles-dir", "/dbt"]' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
           TASK_RUN_ARN=$(aws ecs run-task \
@@ -127,7 +120,7 @@ jobs:
           TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
-            jq '.containerDefinitions[0].command = ["sh", "-c", "dbt compile --profiles-dir /dbt && aws s3 sync target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"]' | \
+            jq '.containerDefinitions[0].command = ["sh", "-c", "dbt compile --project-dir northwind --profiles-dir /dbt && aws s3 sync northwind/target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"]' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
           aws ecs run-task \
