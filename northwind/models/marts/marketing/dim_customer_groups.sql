@@ -1,3 +1,4 @@
+-- test
 with customer_revenues as (
 
     select
