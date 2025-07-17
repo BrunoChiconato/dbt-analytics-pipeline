@@ -1,4 +1,4 @@
-# DBT Bootcamp
+# DBT Bootcamp - teste
 
 A comprehensive repository containing exercises and projects from the DBT Core bootcamp, demonstrating modern data transformation workflows and best practices.
 
