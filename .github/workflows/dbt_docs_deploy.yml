@@ -45,7 +45,6 @@ jobs:
 
           TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
 
-          # Lógica corrigida, igual à da pipeline principal
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq --arg IMAGE_URI "$IMAGE_URI" '.containerDefinitions[0].image = $IMAGE_URI' | \
             jq '.containerDefinitions[0].command = ["sh", "-c", "dbt docs generate && aws s3 sync target/ s3://${{ secrets.DBT_DOCS_BUCKET }}/ --delete"]' | \
