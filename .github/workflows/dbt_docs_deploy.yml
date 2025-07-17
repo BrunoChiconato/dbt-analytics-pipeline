@@ -3,10 +3,6 @@ name: Deploy dbt Documentation
 on:
   repository_dispatch:
     types: [deploy-docs]
-  workflow_run:
-    workflows: ["DBT Run Pipeline"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 
 env:
@@ -19,7 +15,6 @@ jobs:
   generate-and-deploy-docs:
     name: Generate and Deploy Documentation
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch' }}
 
     steps:
       - name: Checkout code
@@ -32,59 +27,39 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Generate dbt docs
-        id: generate-docs
-        run: |
-          CONTAINER_OVERRIDE=$(cat <<EOF
-          {
-            "containerOverrides": [
-              {
-                "name": "dbt",
-                "command": [
-                  "sh", "-c",
-                  "dbt docs generate --profiles-dir /dbt && aws s3 sync target/ s3://${{ secrets.DBT_DOCS_BUCKET }}/"
-                ]
-              }
-            ]
-          }
-          EOF
-          )
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-          TASK_ARN=$(aws ecs run-task \
+      - name: Install JQ
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Generate and Deploy dbt docs to S3
+        id: generate-docs
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.event.client_payload.sha }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "Using image: $IMAGE_URI"
+
+          TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
+
+          # Lógica corrigida, igual à da pipeline principal
+          NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
+            jq --arg IMAGE_URI "$IMAGE_URI" '.containerDefinitions[0].image = $IMAGE_URI' | \
+            jq '.containerDefinitions[0].command = ["sh", "-c", "dbt docs generate && aws s3 sync target/ s3://${{ secrets.DBT_DOCS_BUCKET }}/ --delete"]' | \
+            jq 'del(.containerDefinitions[0].environment)' | \
+            jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
+
+          NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          TASK_RUN_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --task-definition $NEW_TASK_ARN \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_1 }},${{ secrets.PRIVATE_SUBNET_2 }}],securityGroups=[${{ secrets.FARGATE_SECURITY_GROUP }}]}" \
-            --overrides "$CONTAINER_OVERRIDE" \
             --query 'tasks[0].taskArn' \
             --output text)
 
-          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARN
-
-      - name: Setup Python
-        if: ${{ vars.USE_GITHUB_PAGES == 'true' }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install dbt
-        if: ${{ vars.USE_GITHUB_PAGES == 'true' }}
-        run: |
-          pip install dbt-postgres==${{ vars.DBT_VERSION }}
-
-      - name: Generate docs locally
-        if: ${{ vars.USE_GITHUB_PAGES == 'true' }}
-        run: |
-          mkdir -p ~/.dbt
-          echo "${{ secrets.DBT_PROFILES_YML }}" > ~/.dbt/profiles.yml
-
-          dbt docs generate
-
-      - name: Deploy to GitHub Pages
-        if: ${{ vars.USE_GITHUB_PAGES == 'true' }}
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./target
-          publish_branch: gh-pages
-          cname: docs.northwind-analytics.com
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_RUN_ARN
