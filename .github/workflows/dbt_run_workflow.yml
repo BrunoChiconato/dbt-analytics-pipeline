@@ -4,10 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'models/**'
-      - 'data/**'
-      - 'macros/**'
-      - 'dbt_project.yml'
+      - 'northwind/**' # Monitora a pasta correta
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -57,14 +54,11 @@ jobs:
         id: run-dbt
         run: |
           TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
-
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
-            jq '.containerDefinitions[0].command = ["dbt", "run", "--project-dir", "northwind"]' | \
+            jq '.containerDefinitions[0].command = ["dbt", "run"]' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
-
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
-
           TASK_RUN_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER }} \
             --task-definition $NEW_TASK_ARN \
@@ -72,17 +66,13 @@ jobs:
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_1 }},${{ secrets.PRIVATE_SUBNET_2 }}],securityGroups=[${{ secrets.FARGATE_SECURITY_GROUP }}]}" \
             --query 'tasks[0].taskArn' \
             --output text)
-
           echo "task_arn=$TASK_RUN_ARN" >> $GITHUB_OUTPUT
-
           aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_RUN_ARN
-
           EXIT_CODE=$(aws ecs describe-tasks \
             --cluster ${{ env.ECS_CLUSTER }} \
             --tasks $TASK_RUN_ARN \
             --query 'tasks[0].containers[0].exitCode' \
             --output text)
-
           if [ "$EXIT_CODE" != "0" ]; then
             echo "dbt run failed with exit code $EXIT_CODE"
             exit 1
@@ -93,7 +83,7 @@ jobs:
           TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
-            jq '.containerDefinitions[0].command = ["dbt", "test", "--project-dir", "northwind"]' | \
+            jq '.containerDefinitions[0].command = ["dbt", "test"]' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
           TASK_RUN_ARN=$(aws ecs run-task \
@@ -120,7 +110,7 @@ jobs:
           TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query 'taskDefinition')
           NEW_TASK_DEFINITION_JSON=$(echo $TASK_DEFINITION_JSON | \
             jq '.containerDefinitions[0].image = "${{ steps.build-image.outputs.image }}"' | \
-            jq '.containerDefinitions[0].command = ["sh", "-c", "dbt compile --project-dir northwind && aws s3 sync northwind/target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"]' | \
+            jq '.containerDefinitions[0].command = ["sh", "-c", "dbt compile && aws s3 sync target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"]' | \
             jq 'del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
           NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEFINITION_JSON" --query 'taskDefinition.taskDefinitionArn' --output text)
           aws ecs run-task \
