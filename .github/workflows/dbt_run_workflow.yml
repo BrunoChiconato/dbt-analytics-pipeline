@@ -57,6 +57,7 @@ jobs:
             "containerOverrides": [
               {
                 "name": "dbt",
+                "image": "${{ steps.build-image.outputs.image }}",
                 "command": ["dbt", "run", "--profiles-dir", "/dbt"],
                 "environment": [
                   {
@@ -103,8 +104,9 @@ jobs:
           {
             "containerOverrides": [
               {
-                "name": "dbt",
-                "command": ["dbt", "test", "--profiles-dir", "/dbt"]
+              "name": "dbt",
+              "image": "${{ steps.build-image.outputs.image }}",
+              "command": ["dbt", "test", "--profiles-dir", "/dbt"]
               }
             ]
           }
@@ -142,6 +144,7 @@ jobs:
             "containerOverrides": [
               {
                 "name": "dbt",
+                "image": "${{ steps.build-image.outputs.image }}",
                 "command": [
                   "sh", "-c",
                   "dbt compile --profiles-dir /dbt && aws s3 sync target/ s3://${{ secrets.DBT_ARTIFACTS_BUCKET }}/runs/${{ github.sha }}/"
